@@ -22,12 +22,10 @@ using namespace ascii_render;
 #include <mutex>
 #include <condition_variable>
 
-// Типы для libvlc структур (просто void*)
 using libvlc_instance_t = void;
 using libvlc_media_t = void;
 using libvlc_media_player_t = void;
 
-// Правильные typedef (cdecl, как в libvlc)
 using libvlc_new_t = libvlc_instance_t* (*)(int, const char* const*);
 using libvlc_media_new_path_t = libvlc_media_t* (*)(libvlc_instance_t*, const char*);
 using libvlc_media_player_new_from_media_t = libvlc_media_player_t* (*)(libvlc_media_t*);
@@ -41,7 +39,6 @@ using libvlc_media_player_stop_t = void (*)(libvlc_media_player_t*);
 using libvlc_media_player_release_t = void (*)(libvlc_media_player_t*);
 using libvlc_release_t = void (*)(libvlc_instance_t*);
 
-// Глобальные указатели на функции
 libvlc_new_t libvlc_new = nullptr;
 libvlc_media_new_path_t libvlc_media_new_path = nullptr;
 libvlc_media_player_new_from_media_t libvlc_media_player_new_from_media = nullptr;
@@ -55,7 +52,6 @@ libvlc_media_player_stop_t libvlc_media_player_stop = nullptr;
 libvlc_media_player_release_t libvlc_media_player_release = nullptr;
 libvlc_release_t libvlc_release = nullptr;
 
-// Загрузка функций из DLL
 bool load_vlc_functions(HMODULE vlc) {
     libvlc_new = (libvlc_new_t)GetProcAddress(vlc, "libvlc_new");
     libvlc_media_new_path = (libvlc_media_new_path_t)GetProcAddress(vlc, "libvlc_media_new_path");
@@ -122,11 +118,11 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
             auto &me = record.Event.MouseEvent;
             if (me.dwEventFlags == MOUSE_WHEELED) {
                 short delta = GET_WHEEL_DELTA_WPARAM(me.dwButtonState);
-                if (delta > 0) { // колесо вверх
+                if (delta > 0) {
                     int v = std::min(100, volume.load() + 5);
                     volume.store(v);
                     libvlc_audio_set_volume(mediaPlayer, v);
-                } else { // колесо вниз
+                } else {
                     int v = std::max(0, volume.load() - 5);
                     volume.store(v);
                     libvlc_audio_set_volume(mediaPlayer, v);
@@ -136,12 +132,10 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
     }
 }
 
-// Очередь и синхронизация для ASCII-строк
 static std::queue<std::string> ascii_queue;
 static std::mutex ascii_mutex;
 static std::condition_variable ascii_cv;
 
-// thread: читает кадры, преобразует в ASCII и кладёт в очередь
 void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              libvlc_media_player_t* mediaPlayer,
                              std::atomic<bool>& running,
@@ -222,7 +216,6 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
     ascii_cv.notify_all();
 }
 
-// thread: берёт ASCII из очереди и отрисовывает
 void render_thread(std::atomic<bool>& running)
 {
     while (running.load() || !ascii_queue.empty()) {
@@ -324,16 +317,13 @@ int main(int argc, char* argv[]) {
     libvlc_media_player_play(mediaPlayer);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // input thread
     std::thread input_thread(handle_input, mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume));
 
-    // processing and rendering threads
     std::thread processing_thread(video_processing_thread, std::ref(cap), width, height,
                                   mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume), frame_duration);
 
     std::thread drawing_thread(render_thread, std::ref(running));
 
-    // Ждём завершения
     if (processing_thread.joinable()) processing_thread.join();
     if (drawing_thread.joinable()) drawing_thread.join();
     if (input_thread.joinable()) input_thread.join();
