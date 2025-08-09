@@ -116,34 +116,25 @@ namespace ascii_render {
 
         int total_len = width;
         int time_len = (int)time_str.length();
-        int status_len = 2; // длина статуса ("||" или "|>")
+        int status_len = 2;
         int volume_len = (int)volume_str.length();
 
-        // Позиция, куда вставлять статус, чтобы он был ровно по центру всей строки
         int status_start_pos = total_len / 2 - status_len / 2;
 
-        // Создаем строку из пробелов длиной total_len
         std::string line(total_len, ' ');
 
-        // Вставляем время слева
         for (int i = 0; i < time_len && i < total_len; ++i) {
             line[i] = time_str[i];
         }
 
-        // Вставляем громкость справа
         for (int i = 0; i < volume_len && (total_len - volume_len + i) < total_len; ++i) {
             line[total_len - volume_len + i] = volume_str[i];
         }
 
-        // Вставляем статус в центр строки
-        // Статус может содержать ANSI цвета — чтобы цвета сохранить, соберем строку по частям:
-
         std::ostringstream oss_line;
 
-        // Левая часть (до статуса)
         oss_line << line.substr(0, status_start_pos);
 
-        // Цветной статус
         std::string raw_status = is_paused ? "||" : "|>";
         std::string colored_status = raw_status;
         if (use_color) {
@@ -151,7 +142,6 @@ namespace ascii_render {
         }
         oss_line << colored_status;
 
-        // Правая часть (после статуса)
         oss_line << line.substr(status_start_pos + status_len);
 
         oss << oss_line.str() << "\n";
@@ -159,4 +149,4 @@ namespace ascii_render {
         return oss.str();
     }
 
-} // namespace ascii_render
+}
