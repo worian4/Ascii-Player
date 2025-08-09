@@ -14,7 +14,7 @@ set(HEADERS
     ascii_render.hpp
 )
 
-set(OpenCV_DIR "C:/opencv/build/x64/vc16/lib")  # <-- твой путь к OpenCVConfig.cmake
+set(OpenCV_DIR "C:/opencv/build/x64/vc16/lib")  # <-- path to OpenCVConfig.cmake
 
 message(STATUS "OpenCV_LIBS = ${OpenCV_LIBS}")
 message(STATUS "OpenCV_INCLUDE_DIRS = ${OpenCV_INCLUDE_DIRS}")
@@ -34,3 +34,4 @@ if (WIN32)
             $<TARGET_FILE_DIR:ASCII_Player>
     )
 endif()
+
