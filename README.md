@@ -9,6 +9,7 @@ Installation:
 1. Download C++ and C++ Build Tools for your system from VS Installer
 2. Download opencv
 3. Locate all the files
-4. Edit ```CMakeLists.txt``` with your opencv location
-5. Build the project
-6. Enjoy!
+4. Download ```VLC``` and put ```plugins``` folder from ```Video LAN``` with all the files
+5. Edit ```CMakeLists.txt``` with your opencv location
+6. Build the project
+7. Enjoy!
