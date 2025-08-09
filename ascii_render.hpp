@@ -5,10 +5,8 @@
 
 namespace ascii_render {
 
-    // Выводит частично обновлённый ASCII кадр, возвращает количество обновлённых строк
     size_t render_frame(const std::string& frame);
 
-    // Преобразует RGB изображение в ASCII строку
     std::string frame_to_ascii(
         const cv::Mat& frame,
         bool use_color = false,
@@ -19,4 +17,5 @@ namespace ascii_render {
         int volume = 50
     );
 
-} // namespace ascii_render
+}
+
