@@ -12,7 +12,6 @@ void enableANSI() {
 #include <iostream>
 #include <thread>
 #include <atomic>
-#include <windows.h>
 #include <conio.h>
 #include <opencv2/opencv.hpp>
 #include "ascii_render.hpp"
@@ -132,6 +131,10 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
     }
 }
 
+static std::queue<std::pair<cv::Mat, std::string>> color_queue;
+static std::mutex color_mutex;
+static std::condition_variable color_cv;
+
 static std::queue<std::string> ascii_queue;
 static std::mutex ascii_mutex;
 static std::condition_variable ascii_cv;
@@ -141,7 +144,8 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              std::atomic<bool>& running,
                              std::atomic<bool>& paused,
                              std::atomic<int>& volume,
-                             double frame_duration)
+                             double frame_duration,
+                             bool rgb)
 {
     cv::Mat frame;
     cv::Mat last_frame;
@@ -150,6 +154,8 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
     bool paused_frame_pushed = false;
     bool first_frame_read = false;
+    
+    const size_t MAX_QUEUE = 3;
 
     while (running.load()) {
         bool paused_local = paused.load();
@@ -169,13 +175,21 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
             int volume_local = volume.load();
 
-            std::string ascii = frame_to_ascii(frame, true, paused_local, progress, current_time, duration, volume_local);
+            std::string ascii_mono = frame_to_ascii_mono(frame, paused_local, progress, current_time, duration, volume_local);
 
-            {
+            if (rgb) {
+                std::lock_guard<std::mutex> lock(color_mutex);
+                if (color_queue.size() >= MAX_QUEUE)
+                    color_queue.pop();
+                color_queue.emplace(last_frame.clone(), ascii_mono);
+                color_cv.notify_one();
+            } else {
                 std::lock_guard<std::mutex> lock(ascii_mutex);
-                ascii_queue.push(std::move(ascii));
+                if (ascii_queue.size() >= MAX_QUEUE)
+                    ascii_queue.pop();
+                ascii_queue.push(std::move(ascii_mono));
+                ascii_cv.notify_one();
             }
-            ascii_cv.notify_one();
 
             paused_frame_pushed = false;
         } else {
@@ -189,13 +203,21 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
                 int volume_local = volume.load();
 
-                std::string ascii = frame_to_ascii(last_frame, true, paused_local, progress, current_time, duration, volume_local);
+                std::string ascii_mono = frame_to_ascii_mono(last_frame, paused_local, progress, current_time, duration, volume_local);
 
-                {
+                if (rgb) {
+                    std::lock_guard<std::mutex> lock(color_mutex);
+                    if (color_queue.size() >= MAX_QUEUE)
+                        color_queue.pop();
+                    color_queue.emplace(last_frame.clone(), ascii_mono);
+                    color_cv.notify_one();
+                } else {
                     std::lock_guard<std::mutex> lock(ascii_mutex);
-                    ascii_queue.push(std::move(ascii));
+                    if (ascii_queue.size() >= MAX_QUEUE)
+                        ascii_queue.pop();
+                    ascii_queue.push(std::move(ascii_mono));
+                    ascii_cv.notify_one();
                 }
-                ascii_cv.notify_one();
 
                 paused_frame_pushed = true;
             }
@@ -214,6 +236,29 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
     running.store(false);
     ascii_cv.notify_all();
+}
+
+void color_thread_func(std::atomic<bool>& running) {
+    while (running.load() || !color_queue.empty()) {
+        std::unique_lock<std::mutex> lock(color_mutex);
+        color_cv.wait(lock, [&]() { return !color_queue.empty() || !running.load(); });
+
+        while (!color_queue.empty()) {
+            auto [frame, ascii_mono] = std::move(color_queue.front());
+            color_queue.pop();
+            lock.unlock();
+
+            std::string colored_ascii = apply_color_to_ascii(frame, ascii_mono);
+
+            {
+                std::lock_guard<std::mutex> lock2(ascii_mutex);
+                ascii_queue.push(std::move(colored_ascii));
+            }
+            ascii_cv.notify_one();
+
+            lock.lock();
+        }
+    }
 }
 
 void render_thread(std::atomic<bool>& running)
@@ -260,6 +305,8 @@ int main(int argc, char* argv[]) {
         FreeLibrary(vlc);
         return 1;
     }
+
+    bool rgb = true; //<- change to false for better performance
 
     std::atomic<bool> running(true);
     std::atomic<bool> paused(false);
@@ -320,11 +367,17 @@ int main(int argc, char* argv[]) {
     std::thread input_thread(handle_input, mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume));
 
     std::thread processing_thread(video_processing_thread, std::ref(cap), width, height,
-                                  mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume), frame_duration);
+                                  mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume), frame_duration, rgb);
+
+    std::thread color_thread;
+    if (rgb) {
+        color_thread = std::thread(color_thread_func, std::ref(running));
+    }
 
     std::thread drawing_thread(render_thread, std::ref(running));
 
     if (processing_thread.joinable()) processing_thread.join();
+    if (rgb && color_thread.joinable()) color_thread.join();
     if (drawing_thread.joinable()) drawing_thread.join();
     if (input_thread.joinable()) input_thread.join();
 
