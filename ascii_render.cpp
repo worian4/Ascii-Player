@@ -128,18 +128,16 @@ namespace ascii_render {
         int height = frame.rows;
         int x = 0, y = 0;
 
-        // Сбрасываем последний цвет для оптимизации
         int last_r = -1, last_g = -1, last_b = -1;
 
-        // Копируем один раз UMat в CPU, чтобы потом быстро брать пиксели
         cv::Mat cpu_frame;
-        frame.copyTo(cpu_frame); // Быстро, т.к. GPU → CPU одним блоком
+        frame.copyTo(cpu_frame);
 
         for (char ch : ascii) {
             if (ch == '\r') continue;
 
             if (ch == '\n') {
-                colored << "\x1b[0m\n"; // сброс цвета
+                colored << "\x1b[0m\n";
                 last_r = last_g = last_b = -1;
                 x = 0;
                 y++;
@@ -175,7 +173,8 @@ namespace ascii_render {
             ++x;
         }
 
-        colored << "\x1b[0m"; // сброс цвета в конце
+        colored << "\x1b[0m";
         return colored.str();
     }
 }
+
