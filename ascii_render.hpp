@@ -16,6 +16,6 @@ namespace ascii_render {
         int volume
     );
 
-    std::string apply_color_to_ascii(const cv::Mat& frame, const std::string& ascii);
+    std::string apply_color_to_ascii(const cv::UMat& frame, const std::string& ascii);
 
 }
