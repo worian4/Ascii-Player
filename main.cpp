@@ -140,7 +140,6 @@ static std::queue<std::string> ascii_queue;
 static std::mutex ascii_mutex;
 static std::condition_variable ascii_cv;
 
-// глобальная флаговая переменная: использовать CUDA (если доступна)
 static std::atomic<bool> g_use_cuda(false);
 
 void video_processing_thread(cv::VideoCapture& cap, int width, int height,
@@ -151,10 +150,10 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              double frame_duration,
                              bool rgb)
 {
-    cv::Mat frame;           // Временное хранение с VideoCapture (CPU)
-    cv::UMat uframe;         // GPU/OpenCL буфер
-    cv::UMat uresized;       // GPU/OpenCL ресайз
-    cv::UMat last_frame;     // Последний кадр в GPU для паузы
+    cv::Mat frame;
+    cv::UMat uframe;
+    cv::UMat uresized;
+    cv::UMat last_frame;
 
     int frame_index = 0;
     double start_time = (double)cv::getTickCount() / cv::getTickFrequency();
@@ -405,3 +404,4 @@ int main(int argc, char* argv[]) {
     FreeLibrary(vlc);
     return 0;
 }
+
