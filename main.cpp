@@ -14,6 +14,7 @@ void enableANSI() {
 #include <atomic>
 #include <conio.h>
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/ocl.hpp>
 #include "ascii_render.hpp"
 using namespace ascii_render;
 
@@ -131,13 +132,16 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
     }
 }
 
-static std::queue<std::pair<cv::Mat, std::string>> color_queue;
+static std::queue<std::pair<cv::UMat, std::string>> color_queue;
 static std::mutex color_mutex;
 static std::condition_variable color_cv;
 
 static std::queue<std::string> ascii_queue;
 static std::mutex ascii_mutex;
 static std::condition_variable ascii_cv;
+
+// глобальная флаговая переменная: использовать CUDA (если доступна)
+static std::atomic<bool> g_use_cuda(false);
 
 void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              libvlc_media_player_t* mediaPlayer,
@@ -147,14 +151,16 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              double frame_duration,
                              bool rgb)
 {
-    cv::Mat frame;
-    cv::Mat last_frame;
+    cv::Mat frame;           // Временное хранение с VideoCapture (CPU)
+    cv::UMat uframe;         // GPU/OpenCL буфер
+    cv::UMat uresized;       // GPU/OpenCL ресайз
+    cv::UMat last_frame;     // Последний кадр в GPU для паузы
+
     int frame_index = 0;
     double start_time = (double)cv::getTickCount() / cv::getTickFrequency();
-
     bool paused_frame_pushed = false;
     bool first_frame_read = false;
-    
+
     const size_t MAX_QUEUE = 3;
 
     while (running.load()) {
@@ -163,8 +169,12 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
         if (!paused_local) {
             if (!cap.read(frame)) break;
             first_frame_read = true;
-            cv::resize(frame, frame, cv::Size(width, height));
-            last_frame = frame.clone();
+
+            frame.copyTo(uframe);
+
+            cv::resize(uframe, uresized, cv::Size(width, height));
+
+            last_frame = uresized.clone();
 
             double current_time = 0.0;
             double duration = 0.0;
@@ -175,13 +185,15 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
             int volume_local = volume.load();
 
-            std::string ascii_mono = frame_to_ascii_mono(frame, paused_local, progress, current_time, duration, volume_local);
+            cv::Mat tmp_cpu;
+            last_frame.copyTo(tmp_cpu); // GPU → CPU
+            std::string ascii_mono = frame_to_ascii_mono(tmp_cpu, paused_local, progress, current_time, duration, volume_local);
 
             if (rgb) {
                 std::lock_guard<std::mutex> lock(color_mutex);
                 if (color_queue.size() >= MAX_QUEUE)
                     color_queue.pop();
-                color_queue.emplace(last_frame.clone(), ascii_mono);
+                color_queue.emplace(uresized, ascii_mono);
                 color_cv.notify_one();
             } else {
                 std::lock_guard<std::mutex> lock(ascii_mutex);
@@ -192,7 +204,8 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
             }
 
             paused_frame_pushed = false;
-        } else {
+        } 
+        else {
             if (first_frame_read && !paused_frame_pushed && !last_frame.empty()) {
                 double current_time = 0.0;
                 double duration = 0.0;
@@ -203,13 +216,15 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
 
                 int volume_local = volume.load();
 
-                std::string ascii_mono = frame_to_ascii_mono(last_frame, paused_local, progress, current_time, duration, volume_local);
+                cv::Mat tmp_cpu;
+                last_frame.copyTo(tmp_cpu); // GPU → CPU
+                std::string ascii_mono = frame_to_ascii_mono(tmp_cpu, paused_local, progress, current_time, duration, volume_local);
 
                 if (rgb) {
                     std::lock_guard<std::mutex> lock(color_mutex);
                     if (color_queue.size() >= MAX_QUEUE)
                         color_queue.pop();
-                    color_queue.emplace(last_frame.clone(), ascii_mono);
+                    color_queue.emplace(uresized, ascii_mono);
                     color_cv.notify_one();
                 } else {
                     std::lock_guard<std::mutex> lock(ascii_mutex);
@@ -244,11 +259,11 @@ void color_thread_func(std::atomic<bool>& running) {
         color_cv.wait(lock, [&]() { return !color_queue.empty() || !running.load(); });
 
         while (!color_queue.empty()) {
-            auto [frame, ascii_mono] = std::move(color_queue.front());
+            auto [uframe, ascii_mono] = std::move(color_queue.front()); // uframe — UMat
             color_queue.pop();
             lock.unlock();
 
-            std::string colored_ascii = apply_color_to_ascii(frame, ascii_mono);
+            std::string colored_ascii = apply_color_to_ascii(uframe, ascii_mono);
 
             {
                 std::lock_guard<std::mutex> lock2(ascii_mutex);
@@ -285,6 +300,9 @@ int main(int argc, char* argv[]) {
     #else
         freopen("/dev/null", "w", stderr);
     #endif
+
+    cv::ocl::setUseOpenCL(true);
+    std::cout << "OpenCL: " << (cv::ocl::useOpenCL() ? "ENABLED" : "DISABLED") << std::endl;
 
     if (argc < 2) {
         std::cerr << "Usage: program <video_path>" << std::endl;
