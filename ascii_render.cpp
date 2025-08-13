@@ -122,41 +122,60 @@ namespace ascii_render {
         return oss.str();
     }
 
-    std::string apply_color_to_ascii(const cv::Mat& frame, const std::string& ascii) {
+    std::string apply_color_to_ascii(const cv::UMat& frame, const std::string& ascii) {
         std::ostringstream colored;
         int width = frame.cols;
         int height = frame.rows;
         int x = 0, y = 0;
 
+        // Сбрасываем последний цвет для оптимизации
+        int last_r = -1, last_g = -1, last_b = -1;
+
+        // Копируем один раз UMat в CPU, чтобы потом быстро брать пиксели
+        cv::Mat cpu_frame;
+        frame.copyTo(cpu_frame); // Быстро, т.к. GPU → CPU одним блоком
+
         for (char ch : ascii) {
             if (ch == '\r') continue;
+
             if (ch == '\n') {
-                colored << "\x1b[0m\n";
+                colored << "\x1b[0m\n"; // сброс цвета
+                last_r = last_g = last_b = -1;
                 x = 0;
                 y++;
                 continue;
             }
 
             if (x >= 0 && x < width && y >= 0 && y < height) {
-                cv::Vec3b bgr;
-                if (frame.channels() == 3) {
-                    bgr = frame.at<cv::Vec3b>(y, x);
+                int b, g, r;
+                if (cpu_frame.channels() == 3) {
+                    const cv::Vec3b& bgr = cpu_frame.at<cv::Vec3b>(y, x);
+                    b = bgr[0];
+                    g = bgr[1];
+                    r = bgr[2];
                 } else {
-                    cv::Vec4b bgra = frame.at<cv::Vec4b>(y, x);
-                    bgr = cv::Vec3b(bgra[0], bgra[1], bgra[2]);
+                    const cv::Vec4b& bgra = cpu_frame.at<cv::Vec4b>(y, x);
+                    b = bgra[0];
+                    g = bgra[1];
+                    r = bgra[2];
                 }
-                colored << "\x1b[38;2;" 
-                        << (int)bgr[2] << ";" 
-                        << (int)bgr[1] << ";" 
-                        << (int)bgr[0] << "m" 
-                        << ch;
+
+                if (r != last_r || g != last_g || b != last_b) {
+                    colored << "\x1b[38;2;" << r << ";" << g << ";" << b << "m";
+                    last_r = r;
+                    last_g = g;
+                    last_b = b;
+                }
+
+                colored << ch;
             } else {
                 colored << ch;
             }
 
             ++x;
         }
-        colored << "\x1b[0m";
+
+        colored << "\x1b[0m"; // сброс цвета в конце
         return colored.str();
     }
 }
