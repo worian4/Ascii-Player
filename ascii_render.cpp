@@ -176,11 +176,9 @@ namespace ascii_render {
         for (auto &t : threads)
             t.join();
 
-        // Собираем в одну строку
         std::ostringstream result;
         for (auto &p : parts) result << p;
 
-        // Добавляем прогресс-бар и строку состояния (одним потоком)
         int bar_width = width;
         if (bar_width < 10) bar_width = 10;
         if (progress < 0.0) progress = 0.0;
@@ -227,3 +225,4 @@ namespace ascii_render {
         return result.str();
     }
 }
+
