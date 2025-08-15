@@ -18,6 +18,8 @@
 
 
 
+static const char* LUT = " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
+
 class ThreadPool {
 public:
     ThreadPool(size_t num_threads) : stop_flag(false) {
@@ -201,10 +203,9 @@ namespace ascii_render {
         std::ostringstream oss;
 
         auto gray_to_ascii = [](uchar value) -> char {
-            static const char* chars = " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
-            size_t len = strlen(chars);
+            size_t len = strlen(LUT);
             int index = static_cast<int>((value * (len - 1)) / 255);
-            return chars[index];
+            return LUT[index];
         };
 
         for (int y = 0; y < gray.rows; ++y) {
@@ -282,8 +283,6 @@ namespace ascii_render {
         CV_Assert(frame.type()==CV_8UC3 && frame.isContinuous());
         const int W = frame.cols, H = frame.rows;
 
-        static const char* LUT =
-            " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
         const size_t LUTn = std::strlen(LUT);
 
         const int rows_per = (H + T - 1) / T;
@@ -391,4 +390,3 @@ namespace ascii_render {
         return std::string(buf.data(), tail - buf.data());
     }
 }
-
