@@ -16,6 +16,13 @@ namespace ascii_render {
         int volume
     );
 
-    std::string apply_color_to_ascii(const cv::UMat& frame, const std::string& ascii);
-
+    std::string frame_to_ascii_color(
+        const cv::Mat& frame,
+        bool is_paused,
+        double progress,
+        double current_time,
+        double total_time,
+        int volume,
+        int num_threads
+    );
 }
