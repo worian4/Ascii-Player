@@ -288,6 +288,8 @@ int main(int argc, char* argv[]) {
     }
 
     bool rgb = true; //<- change to false for better performance
+    int width = 200; //the lower the better for the performace
+    int color_threads = 6; //used in color mode only
 
     std::atomic<bool> running(true);
     std::atomic<bool> paused(false);
@@ -338,7 +340,6 @@ int main(int argc, char* argv[]) {
     }
     double frame_duration = 1.0 / fps;
 
-    int width = 100;
     int height = static_cast<int>((cap.get(cv::CAP_PROP_FRAME_HEIGHT) / cap.get(cv::CAP_PROP_FRAME_WIDTH)) * width * 0.55);
     set_console_size(width, height + 3);
 
@@ -347,7 +348,6 @@ int main(int argc, char* argv[]) {
 
     std::thread input_thread(handle_input, mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume));
 
-    int color_threads = 4;
     std::thread processing_thread(video_processing_thread, std::ref(cap), width, height,
                                   mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume), frame_duration, rgb, color_threads);
     std::thread drawing_thread(render_thread, std::ref(running));
