@@ -10,7 +10,6 @@
 
 
 
-// Быстрый целочисленный серый: gray = (77*r + 150*g + 29*b) >> 8  (≈ 0.299,0.587,0.114)
 static inline void compute_gray_line_scalar(
     const unsigned char* b, const unsigned char* g, const unsigned char* r,
     unsigned char* gray, int width)
@@ -35,7 +34,6 @@ static inline void compute_gray_line_avx2(
 
     int x = 0;
     for (; x + 32 <= width; x += 32) {
-        // загружаем 32 байта на канал (разбито на 2×16, т.к. расширяем до 16 бит)
         __m128i b_lo8 = _mm_loadu_si128((const __m128i*)(b + x));
         __m128i b_hi8 = _mm_loadu_si128((const __m128i*)(b + x + 16));
         __m128i g_lo8 = _mm_loadu_si128((const __m128i*)(g + x));
@@ -50,7 +48,6 @@ static inline void compute_gray_line_avx2(
         __m256i r_lo16 = _mm256_cvtepu8_epi16(r_lo8);
         __m256i r_hi16 = _mm256_cvtepu8_epi16(r_hi8);
 
-        // y = r*77 + g*150 + b*29
         __m256i y_lo = _mm256_add_epi16(_mm256_add_epi16(_mm256_mullo_epi16(r_lo16, cR),
                                                          _mm256_mullo_epi16(g_lo16, cG)),
                                                          _mm256_mullo_epi16(b_lo16, cB));
@@ -58,20 +55,16 @@ static inline void compute_gray_line_avx2(
                                                          _mm256_mullo_epi16(g_hi16, cG)),
                                                          _mm256_mullo_epi16(b_hi16, cB));
 
-        // >>8 и пакуем обратно в u8
         __m256i y_lo_shift = _mm256_srli_epi16(y_lo, 8);
         __m256i y_hi_shift = _mm256_srli_epi16(y_hi, 8);
         __m256i y_u8 = _mm256_packus_epi16(y_lo_shift, y_hi_shift);
 
-        // y_u8 сейчас 32 байта серого
         _mm256_storeu_si256((__m256i*)(gray + x), y_u8);
     }
-    // хвост
     if (x < width) {
         compute_gray_line_scalar(b + x, g + x, r + x, gray + x, width - x);
     }
 #else
-    // если AVX2 недоступен — скаляр
     compute_gray_line_scalar(b, g, r, gray, width);
 #endif
 }
@@ -191,15 +184,14 @@ namespace ascii_render {
         return oss.str();
     }
 
-    // это «версия с SIMD», независимая — не удаляй свою предыдущую функцию.
     std::string frame_to_ascii_color(
-        const cv::Mat& frame,     // BGR, CV_8UC3, continuous
+        const cv::Mat& frame,
         bool is_paused,
         double progress,
         double current_time,
         double total_time,
         int volume,
-        int num_threads           // 2..8 обычно достаточно
+        int num_threads
     ) {
         static const char* chars = " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
         const size_t chars_len = strlen(chars);
@@ -207,36 +199,28 @@ namespace ascii_render {
         const int width  = frame.cols;
         const int height = frame.rows;
 
-        // убеждаемся в непрерывности буфера
         CV_Assert(frame.type() == CV_8UC3);
         CV_Assert(frame.isContinuous());
 
         if (num_threads < 1) num_threads = 1;
         if (num_threads > height) num_threads = height;
 
-        // заранее разложим B,G,R на отдельные каналы для SIMD (OpenCV делает это очень быстро и векторизованно)
         std::vector<cv::Mat> ch(3);
-        cv::split(frame, ch); // ch[0]=B, ch[1]=G, ch[2]=R
+        cv::split(frame, ch);
 
-        // буферы потоков
         std::vector<std::string> thread_buffers(num_threads);
         std::vector<std::thread> workers;
         workers.reserve(num_threads);
 
-        // рабочая функция потока
         auto worker = [&](int start_y, int end_y, std::string& out) {
-            // локальные указатели на каналы
             const unsigned char* B = ch[0].ptr<unsigned char>(0);
             const unsigned char* G = ch[1].ptr<unsigned char>(0);
             const unsigned char* R = ch[2].ptr<unsigned char>(0);
 
-            // смещения в плоском массиве (по строкам)
-            const int stride = width; // у single-channel после split шаг == width
+            const int stride = width;
 
-            // резерв на строковый буфер (примерно)
             out.reserve((end_y - start_y) * width * 28);
 
-            // временный буфер для серой строки
             std::vector<unsigned char> gray_line(width);
 
             for (int y = start_y; y < end_y; ++y) {
@@ -244,12 +228,10 @@ namespace ascii_render {
                 const unsigned char* g_row = G + y * stride;
                 const unsigned char* r_row = R + y * stride;
 
-                // SIMD: считаем gray_line из B,G,R
                 compute_gray_line_avx2(b_row, g_row, r_row, gray_line.data(), width);
 
                 int last_r = -1, last_g = -1, last_b = -1;
 
-                // формируем цветной ASCII по этой строке
                 for (int x = 0; x < width; ++x) {
                     unsigned char r = r_row[x];
                     unsigned char g = g_row[x];
@@ -270,7 +252,6 @@ namespace ascii_render {
             }
         };
 
-        // раздаём строки по блокам
         int base = height / num_threads;
         int rem  = height % num_threads;
         int y0 = 0;
@@ -283,15 +264,13 @@ namespace ascii_render {
         }
         for (auto& th : workers) th.join();
 
-        // склеиваем результат
         size_t total = 0;
         for (auto& s : thread_buffers) total += s.size();
 
         std::string buffer;
-        buffer.reserve(total + width + 128); // запас под бар и строку статуса
+        buffer.reserve(total + width + 128);
         for (auto& s : thread_buffers) buffer.append(s);
 
-        // прогресс-бар
         int bar_width = std::max(10, width);
         if (progress < 0.0) progress = 0.0;
         if (progress > 1.0) progress = 1.0;
@@ -301,7 +280,6 @@ namespace ascii_render {
         buffer.append(std::string(bar_width - filled, '-'));
         buffer.push_back('\n');
 
-        // строка состояния
         auto format_time = [](double seconds) -> std::string {
             int total_sec = (int)seconds;
             int m = total_sec / 60;
@@ -316,11 +294,10 @@ namespace ascii_render {
         std::string status     = is_paused ? "||" : "|>";
 
         std::string line(width, ' ');
-        // time слева
         std::copy(time_str.begin(), time_str.end(), line.begin());
-        // vol справа
+        
         std::copy(volume_str.begin(), volume_str.end(), line.end() - volume_str.size());
-        // статус по центру
+
         int status_pos = width / 2 - 1;
         if (status_pos >= 0 && status_pos + (int)status.size() <= width)
             std::copy(status.begin(), status.end(), line.begin() + status_pos);
@@ -331,3 +308,4 @@ namespace ascii_render {
         return buffer;
     }
 }
+
