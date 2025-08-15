@@ -83,14 +83,13 @@ private:
 static constexpr int Q_LEVELS = 6;
 static constexpr int Q_COUNT  = Q_LEVELS*Q_LEVELS*Q_LEVELS;
 
-// готовые ESC-строки и их длины
-static std::array<std::array<char, 20>, Q_COUNT> g_ansi; // максимум 19 байт
+static std::array<std::array<char, 20>, Q_COUNT> g_ansi; 
 static std::array<uint8_t, Q_COUNT>              g_ansi_len{};
 
 static inline void ansi_init_once() {
     static bool inited = false;
     if (inited) return;
-    // классическая 6-уровневая палитра: 0,51,102,153,204,255
+
     auto lvl = [](int i){ return (i * 255) / (Q_LEVELS - 1); }; // i ∈ [0..5]
     for (int r = 0; r < Q_LEVELS; ++r) {
         for (int g = 0; g < Q_LEVELS; ++g) {
@@ -108,12 +107,10 @@ static inline void ansi_init_once() {
     inited = true;
 }
 
-// корректное квантование: 0..255 -> 0..5 (255 всегда даёт 5)
 static inline int qidx(unsigned v) {
-    return (int)((v * Q_LEVELS) >> 8); // быстрее, чем clamp(v/step)
+    return (int)((v * Q_LEVELS) >> 8);
 }
 
-// -------------------- ВСПОМОГАТЕЛЬНОЕ --------------------
 static inline int digits_u8(unsigned v){ return (v>=100)?3: (v>=10)?2:1; }
 
 static inline void put_u8(char*& p, unsigned v){
@@ -131,7 +128,6 @@ static inline void put_ansi_rgb(char*& p, unsigned r,unsigned g,unsigned b){
     put_u8(p,r); *p++=';'; put_u8(p,g); *p++=';'; put_u8(p,b); *p++='m';
 }
 
-// --- Утилиты ---
 static inline void append_u8(char*& ptr, unsigned v) {
     if (v >= 100) {
         *ptr++ = char('0' + (v / 100));
@@ -292,7 +288,6 @@ namespace ascii_render {
 
         const int rows_per = (H + T - 1) / T;
 
-        // PASS 1: точная длина вывода каждого блока (без хвостов кадра)
         std::vector<size_t> blk_len(T, 0);
         for (int t = 0; t < T; ++t) {
             int y0 = t * rows_per, y1 = std::min(H, y0 + rows_per);
@@ -307,7 +302,7 @@ namespace ascii_render {
                         unsigned b = row[x*3+0], g = row[x*3+1], r = row[x*3+2];
                         int idx = (qidx(r) * Q_LEVELS + qidx(g)) * Q_LEVELS + qidx(b);
                         if (idx != last_idx) { L += g_ansi_len[idx]; last_idx = idx; }
-                        L += 1; // символ
+                        L += 1;
                     }
                     L += 1; // '\n'
                 }
@@ -317,12 +312,10 @@ namespace ascii_render {
         }
         pool->wait_all();
 
-        // смещения и общий размер «тела» кадра
         std::vector<size_t> offset(T, 0);
         size_t body = 0;
         for (int t = 0; t < T; ++t) { offset[t] = body; body += blk_len[t]; }
 
-        // хвост: сброс + прогресс-бар + статус-строка
         const size_t reset_len = 5;               // "\x1b[0m\n"
         const int    barW      = std::max(10, W);
         const size_t bar_len   = barW + 1;        // + '\n'
@@ -332,7 +325,6 @@ namespace ascii_render {
         std::vector<char> buf(total_len);
         char* base = buf.data();
 
-        // PASS 2: запись прямо в свои диапазоны в общем буфере
         for (int t = 0; t < T; ++t) {
             int y0 = t * rows_per, y1 = std::min(H, y0 + rows_per);
             if (y0 >= H || blk_len[t] == 0) continue;
@@ -344,14 +336,14 @@ namespace ascii_render {
                     int last_idx = -1;
                     for (int x = 0; x < W; ++x) {
                         unsigned b = row[x*3+0], g = row[x*3+1], r = row[x*3+2];
-                        // квантованный индекс цвета (без выхода за границы)
+
                         int idx = (qidx(r) * Q_LEVELS + qidx(g)) * Q_LEVELS + qidx(b);
                         if (idx != last_idx) {
                             std::memcpy(p, g_ansi[idx].data(), g_ansi_len[idx]);
                             p += g_ansi_len[idx];
                             last_idx = idx;
                         }
-                        // яркость -> символ
+
                         unsigned gray = (r*77u + g*150u + b*29u) >> 8;
                         *p++ = LUT[(gray * (LUTn - 1)) / 255];
                     }
@@ -362,18 +354,15 @@ namespace ascii_render {
         }
         pool->wait_all();
 
-        // Хвост кадра
         char* tail = base + body;
         std::memcpy(tail, "\x1b[0m\n", 5); tail += 5;
 
-        // прогресс-бар
         double prog = std::clamp(progress, 0.0, 1.0);
         int filled = static_cast<int>(prog * barW);
         std::memset(tail, '#', filled);            tail += filled;
         std::memset(tail, '-', barW - filled);     tail += (barW - filled);
         *tail++ = '\n';
 
-        // статус-строка
         auto put_time5 = [](double sec, char* out){
             int t = (int)sec; int m = t/60, s = t%60;
             out[0]='0'+(m/10); out[1]='0'+(m%10);
@@ -402,3 +391,4 @@ namespace ascii_render {
         return std::string(buf.data(), tail - buf.data());
     }
 }
+
