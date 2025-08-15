@@ -7,66 +7,118 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <immintrin.h>
+#include <thread>
+#include <queue>
+#include <functional>
+#include <condition_variable>
+#include <atomic>
+#include <numeric>
 
 
 
-static inline void compute_gray_line_scalar(
-    const unsigned char* b, const unsigned char* g, const unsigned char* r,
-    unsigned char* gray, int width)
-{
-    for (int x = 0; x < width; ++x) {
-        unsigned int rr = r[x];
-        unsigned int gg = g[x];
-        unsigned int bb = b[x];
-        unsigned int y  = rr * 77 + gg * 150 + bb * 29;
-        gray[x] = static_cast<unsigned char>(y >> 8);
+class ThreadPool {
+public:
+    explicit ThreadPool(int n) { reset(n); }
+    ~ThreadPool() { stop(); }
+
+    void reset(int n) {
+        stop();
+        if (n < 1) n = 1;
+        stop_flag = false;
+        for (int i = 0; i < n; ++i) {
+            workers.emplace_back([this] {
+                for (;;) {
+                    std::function<void()> job;
+                    {
+                        std::unique_lock<std::mutex> lock(mtx);
+                        cv_task.wait(lock, [&]{ return stop_flag || !tasks.empty(); });
+                        if (stop_flag && tasks.empty()) return;
+                        job = std::move(tasks.front()); tasks.pop();
+                    }
+                    job();
+                }
+            });
+        }
     }
+
+    void enqueue(std::function<void()> f) {
+        { std::lock_guard<std::mutex> lock(mtx); tasks.push(std::move(f)); }
+        cv_task.notify_one();
+    }
+
+    void job_started() { pending.fetch_add(1, std::memory_order_relaxed); }
+    void job_finished() {
+        if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            std::lock_guard<std::mutex> lock(wait_mtx);
+            cv_wait.notify_all();
+        }
+    }
+    void wait_all() {
+        std::unique_lock<std::mutex> lock(wait_mtx);
+        cv_wait.wait(lock, [&]{ return pending.load(std::memory_order_acquire) == 0; });
+    }
+
+private:
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            stop_flag = true;
+        }
+        cv_task.notify_all();
+        for (auto& t : workers) if (t.joinable()) t.join();
+        workers.clear();
+        while (!tasks.empty()) tasks.pop();
+        pending.store(0);
+    }
+
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex mtx;
+    std::condition_variable cv_task;
+
+    std::atomic<bool> stop_flag{false};
+    std::atomic<int>  pending{0};
+    std::mutex wait_mtx;
+    std::condition_variable cv_wait;
+};
+
+// -------------------- ВСПОМОГАТЕЛЬНОЕ --------------------
+static inline int digits_u8(unsigned v){ return (v>=100)?3: (v>=10)?2:1; }
+
+static inline void put_u8(char*& p, unsigned v){
+    if (v>=100){ *p++='0'+(v/100); v%=100; *p++='0'+(v/10); *p++='0'+(v%10); }
+    else if(v>=10){ *p++='0'+(v/10); *p++='0'+(v%10); }
+    else { *p++='0'+v; }
 }
 
-static inline void compute_gray_line_avx2(
-    const unsigned char* b, const unsigned char* g, const unsigned char* r,
-    unsigned char* gray, int width)
-{
-#if defined(__AVX2__)
-    const __m256i cR = _mm256_set1_epi16(77);
-    const __m256i cG = _mm256_set1_epi16(150);
-    const __m256i cB = _mm256_set1_epi16(29);
+static inline int ansi_len_rgb(unsigned r,unsigned g,unsigned b){
+    // "\x1b[38;2;" + r + ';' + g + ';' + b + 'm'
+    return 7 + digits_u8(r) + 1 + digits_u8(g) + 1 + digits_u8(b) + 1;
+}
+static inline void put_ansi_rgb(char*& p, unsigned r,unsigned g,unsigned b){
+    std::memcpy(p, "\x1b[38;2;", 7); p+=7;
+    put_u8(p,r); *p++=';'; put_u8(p,g); *p++=';'; put_u8(p,b); *p++='m';
+}
 
-    int x = 0;
-    for (; x + 32 <= width; x += 32) {
-        __m128i b_lo8 = _mm_loadu_si128((const __m128i*)(b + x));
-        __m128i b_hi8 = _mm_loadu_si128((const __m128i*)(b + x + 16));
-        __m128i g_lo8 = _mm_loadu_si128((const __m128i*)(g + x));
-        __m128i g_hi8 = _mm_loadu_si128((const __m128i*)(g + x + 16));
-        __m128i r_lo8 = _mm_loadu_si128((const __m128i*)(r + x));
-        __m128i r_hi8 = _mm_loadu_si128((const __m128i*)(r + x + 16));
-
-        __m256i b_lo16 = _mm256_cvtepu8_epi16(b_lo8);
-        __m256i b_hi16 = _mm256_cvtepu8_epi16(b_hi8);
-        __m256i g_lo16 = _mm256_cvtepu8_epi16(g_lo8);
-        __m256i g_hi16 = _mm256_cvtepu8_epi16(g_hi8);
-        __m256i r_lo16 = _mm256_cvtepu8_epi16(r_lo8);
-        __m256i r_hi16 = _mm256_cvtepu8_epi16(r_hi8);
-
-        __m256i y_lo = _mm256_add_epi16(_mm256_add_epi16(_mm256_mullo_epi16(r_lo16, cR),
-                                                         _mm256_mullo_epi16(g_lo16, cG)),
-                                                         _mm256_mullo_epi16(b_lo16, cB));
-        __m256i y_hi = _mm256_add_epi16(_mm256_add_epi16(_mm256_mullo_epi16(r_hi16, cR),
-                                                         _mm256_mullo_epi16(g_hi16, cG)),
-                                                         _mm256_mullo_epi16(b_hi16, cB));
-
-        __m256i y_lo_shift = _mm256_srli_epi16(y_lo, 8);
-        __m256i y_hi_shift = _mm256_srli_epi16(y_hi, 8);
-        __m256i y_u8 = _mm256_packus_epi16(y_lo_shift, y_hi_shift);
-
-        _mm256_storeu_si256((__m256i*)(gray + x), y_u8);
+// --- Утилиты ---
+static inline void append_u8(char*& ptr, unsigned v) {
+    if (v >= 100) {
+        *ptr++ = char('0' + (v / 100));
+        v %= 100;
+        *ptr++ = char('0' + (v / 10));
+        *ptr++ = char('0' + (v % 10));
+    } else if (v >= 10) {
+        *ptr++ = char('0' + (v / 10));
+        *ptr++ = char('0' + (v % 10));
+    } else {
+        *ptr++ = char('0' + v);
     }
-    if (x < width) {
-        compute_gray_line_scalar(b + x, g + x, r + x, gray + x, width - x);
-    }
-#else
-    compute_gray_line_scalar(b, g, r, gray, width);
-#endif
+}
+static inline void append_ansi_rgb(char*& ptr, unsigned r, unsigned g, unsigned b) {
+    memcpy(ptr, "\x1b[38;2;", 7); ptr += 7;
+    append_u8(ptr, r); *ptr++ = ';';
+    append_u8(ptr, g); *ptr++ = ';';
+    append_u8(ptr, b); *ptr++ = 'm';
 }
 
 namespace ascii_render {
@@ -185,127 +237,146 @@ namespace ascii_render {
     }
 
     std::string frame_to_ascii_color(
-        const cv::Mat& frame,
+        const cv::Mat& frame,   // CV_8UC3, continuous
         bool is_paused,
         double progress,
         double current_time,
         double total_time,
         int volume,
         int num_threads
-    ) {
-        static const char* chars = " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
-        const size_t chars_len = strlen(chars);
+    ){
+        static ThreadPool* pool = nullptr;
+        static int pool_threads = 0;
+        if (!pool) { pool = new ThreadPool(std::max(1,num_threads)); pool_threads = std::max(1,num_threads); }
+        // фиксим число потоков, чтобы не пересоздавать каждый кадр
+        const int T = std::max(1, pool_threads);
 
-        const int width  = frame.cols;
-        const int height = frame.rows;
+        CV_Assert(frame.type()==CV_8UC3 && frame.isContinuous());
+        const int W = frame.cols, H = frame.rows;
 
-        CV_Assert(frame.type() == CV_8UC3);
-        CV_Assert(frame.isContinuous());
+        static const char* LUT =
+            " `.,:;_-~\"><|!/)(^?}{][*=clsji+o2r7fC1xekJutFyVnLzS53TmG4PhaqEwYvZ96bdpg0OUAXNDQRKHM8B&%$W#@";
+        const size_t LUTn = std::strlen(LUT);
 
-        if (num_threads < 1) num_threads = 1;
-        if (num_threads > height) num_threads = height;
+        // --- разбиение строк между потоками ---
+        const int rows_per = (H + T - 1) / T;
 
-        std::vector<cv::Mat> ch(3);
-        cv::split(frame, ch);
+        // PASS 1: считаем точный объём вывода по каждой полосе
+        std::vector<size_t> stripe_len(T, 0);
 
-        std::vector<std::string> thread_buffers(num_threads);
-        std::vector<std::thread> workers;
-        workers.reserve(num_threads);
-
-        auto worker = [&](int start_y, int end_y, std::string& out) {
-            const unsigned char* B = ch[0].ptr<unsigned char>(0);
-            const unsigned char* G = ch[1].ptr<unsigned char>(0);
-            const unsigned char* R = ch[2].ptr<unsigned char>(0);
-
-            const int stride = width;
-
-            out.reserve((end_y - start_y) * width * 28);
-
-            std::vector<unsigned char> gray_line(width);
-
-            for (int y = start_y; y < end_y; ++y) {
-                const unsigned char* b_row = B + y * stride;
-                const unsigned char* g_row = G + y * stride;
-                const unsigned char* r_row = R + y * stride;
-
-                compute_gray_line_avx2(b_row, g_row, r_row, gray_line.data(), width);
-
-                int last_r = -1, last_g = -1, last_b = -1;
-
-                for (int x = 0; x < width; ++x) {
-                    unsigned char r = r_row[x];
-                    unsigned char g = g_row[x];
-                    unsigned char b = b_row[x];
-
-                    unsigned char gray = gray_line[x];
-                    char ch = chars[(gray * (chars_len - 1)) / 255];
-
-                    if (r != last_r || g != last_g || b != last_b) {
-                        char esc[32];
-                        int esc_len = snprintf(esc, sizeof(esc), "\x1b[38;2;%u;%u;%um", (unsigned)r, (unsigned)g, (unsigned)b);
-                        out.append(esc, esc_len);
-                        last_r = r; last_g = g; last_b = b;
+        for (int t=0; t<T; ++t){
+            const int y0 = t*rows_per, y1 = std::min(H, y0+rows_per);
+            if (y0>=H){ stripe_len[t]=0; continue; }
+            pool->job_started();
+            pool->enqueue([&,t,y0,y1]{
+                size_t L = 0;
+                for (int y=y0; y<y1; ++y){
+                    const unsigned char* row = frame.ptr<unsigned char>(y);
+                    int last_r=-1,last_g=-1,last_b=-1;
+                    for (int x=0; x<W; ++x){
+                        unsigned b=row[x*3+0], g=row[x*3+1], r=row[x*3+2];
+                        if (r!=last_r || g!=last_g || b!=last_b){
+                            L += ansi_len_rgb(r,g,b);
+                            last_r=r; last_g=g; last_b=b;
+                        }
+                        L += 1; // сам символ
                     }
-                    out.push_back(ch);
+                    L += 1;   // '\n'
                 }
-                out.append("\x1b[0m\n", 5);
-            }
-        };
-
-        int base = height / num_threads;
-        int rem  = height % num_threads;
-        int y0 = 0;
-
-        for (int t = 0; t < num_threads; ++t) {
-            int start_y = y0;
-            int end_y   = start_y + base + (t < rem ? 1 : 0);
-            y0 = end_y;
-            workers.emplace_back(worker, start_y, end_y, std::ref(thread_buffers[t]));
+                stripe_len[t]=L;
+                pool->job_finished();
+            });
         }
-        for (auto& th : workers) th.join();
+        pool->wait_all();
 
-        size_t total = 0;
-        for (auto& s : thread_buffers) total += s.size();
+        // префикс-сумма → стартовые смещения каждого блока
+        std::vector<size_t> offset(T, 0);
+        size_t body_size = 0;
+        for (int t=0; t<T; ++t){ offset[t]=body_size; body_size += stripe_len[t]; }
 
-        std::string buffer;
-        buffer.reserve(total + width + 128);
-        for (auto& s : thread_buffers) buffer.append(s);
+        // дополнительные хвосты кадра
+        const size_t reset_len = 5;              // "\x1b[0m\n"
+        const int barW = std::max(10, W);
+        const size_t bar_len = barW + 1;         // + '\n'
+        const size_t status_len = W + 1;         // + '\n'
 
-        int bar_width = std::max(10, width);
-        if (progress < 0.0) progress = 0.0;
-        if (progress > 1.0) progress = 1.0;
-        int filled = static_cast<int>(progress * bar_width);
+        const size_t total_len = body_size + reset_len + bar_len + status_len;
 
-        buffer.append(std::string(filled, '#'));
-        buffer.append(std::string(bar_width - filled, '-'));
-        buffer.push_back('\n');
+        // общий буфер (один раз) → все потоки пишут в свои смещения
+        std::vector<char> buf(total_len);
+        char* base = buf.data();
 
-        auto format_time = [](double seconds) -> std::string {
-            int total_sec = (int)seconds;
-            int m = total_sec / 60;
-            int s = total_sec % 60;
-            char buf[6];
-            snprintf(buf, sizeof(buf), "%02d:%02d", m, s);
-            return std::string(buf);
+        // PASS 2: запись в общий буфер по вычисленным смещениям
+        for (int t=0; t<T; ++t){
+            const int y0 = t*rows_per, y1 = std::min(H, y0+rows_per);
+            if (y0>=H || stripe_len[t]==0) continue;
+
+            pool->job_started();
+            pool->enqueue([&,t,y0,y1]{
+                char* p = base + offset[t];
+                for (int y=y0; y<y1; ++y){
+                    const unsigned char* row = frame.ptr<unsigned char>(y);
+                    int last_r=-1,last_g=-1,last_b=-1;
+                    for (int x=0; x<W; ++x){
+                        unsigned b=row[x*3+0], g=row[x*3+1], r=row[x*3+2];
+                        // яркость «на лету»
+                        unsigned gray = (r*77u + g*150u + b*29u) >> 8;
+                        char ch = LUT[(gray * (LUTn - 1)) / 255];
+
+                        if (r!=last_r || g!=last_g || b!=last_b){
+                            put_ansi_rgb(p, r,g,b);
+                            last_r=r; last_g=g; last_b=b;
+                        }
+                        *p++ = ch;
+                    }
+                    *p++ = '\n';
+                }
+                // проверка: мы должны ровно уложиться в stripe_len[t]
+                // (опционально можно assert)
+                pool->job_finished();
+            });
+        }
+        pool->wait_all();
+
+        // Хвост кадра: один общий сброс цвета + прогресс-бар + статус-строка
+        char* tail = base + body_size;
+        std::memcpy(tail, "\x1b[0m\n", 5); tail += 5;
+
+        // прогресс-бар
+        double prog = std::clamp(progress, 0.0, 1.0);
+        int filled = static_cast<int>(prog * barW);
+        std::memset(tail, '#', filled);          tail += filled;
+        std::memset(tail, '-', barW - filled);   tail += (barW - filled);
+        *tail++ = '\n';
+
+        // статус-строка
+        auto put_time5 = [](double sec, char* out){
+            int t = (int)sec; int m=t/60, s=t%60;
+            out[0]='0'+(m/10); out[1]='0'+(m%10);
+            out[2]=':'; out[3]='0'+(s/10); out[4]='0'+(s%10);
         };
+        std::vector<char> line(W, ' ');
+        char t1[5], t2[5]; put_time5(current_time,t1); put_time5(total_time,t2);
 
-        std::string time_str   = " " + format_time(current_time) + " / " + format_time(total_time);
-        std::string volume_str = "Vol: " + std::to_string(volume) + "% ";
-        std::string status     = is_paused ? "||" : "|>";
+        // " mm:ss / mm:ss"
+        const char prefix[] = " ";
+        const char sep[]    = " / ";
+        size_t pos = 0;
+        line[pos++] = prefix[0];
+        std::memcpy(&line[pos], t1, 5); pos+=5;
+        std::memcpy(&line[pos], sep, 3); pos+=3;
+        std::memcpy(&line[pos], t2, 5); pos+=5;
 
-        std::string line(width, ' ');
-        std::copy(time_str.begin(), time_str.end(), line.begin());
-        
-        std::copy(volume_str.begin(), volume_str.end(), line.end() - volume_str.size());
+        std::string vol = "Vol: " + std::to_string(volume) + "% ";
+        std::memcpy(&line[W - (int)vol.size()], vol.data(), vol.size());
 
-        int status_pos = width / 2 - 1;
-        if (status_pos >= 0 && status_pos + (int)status.size() <= width)
-            std::copy(status.begin(), status.end(), line.begin() + status_pos);
+        const char* status = is_paused ? "||" : "|>";
+        int spos = W/2 - 1;
+        if (spos>=0 && spos+2<=W) { line[spos]=status[0]; line[spos+1]=status[1]; }
 
-        buffer.append(line);
-        buffer.push_back('\n');
+        std::memcpy(tail, line.data(), W); tail += W;
+        *tail++ = '\n';
 
-        return buffer;
+        return  std::string(buf.data(), tail - buf.data());
     }
 }
-
