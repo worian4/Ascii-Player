@@ -7,6 +7,41 @@ void enableANSI() {
     dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(hOut, dwMode);
 }
+
+void set_console_size(int width, int height) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    COORD bufferSize = { (SHORT)width, (SHORT)height };
+    SMALL_RECT windowSize = { 0, 0, (SHORT)(width - 1), (SHORT)(height - 1) };
+    SetConsoleScreenBufferSize(hOut, bufferSize);
+    SetConsoleWindowInfo(hOut, TRUE, &windowSize);
+}
+
+void remove_scrollbars(int width, int height) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    COORD bufferSize;
+    bufferSize.X = (SHORT)width;
+    bufferSize.Y = (SHORT)height;
+    SetConsoleScreenBufferSize(hOut, bufferSize);
+
+    SMALL_RECT winSize;
+    winSize.Left = 0;
+    winSize.Top = 0;
+    winSize.Right = (SHORT)(width - 1);
+    winSize.Bottom = (SHORT)(height - 1);
+    SetConsoleWindowInfo(hOut, TRUE, &winSize);
+}
+
+void move_console_to_top_left() {
+    HWND hwndConsole = GetConsoleWindow();
+
+    RECT workArea;
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+
+    // Перемещаем в верхний левый угол рабочей области
+    SetWindowPos(hwndConsole, HWND_TOP, workArea.left, workArea.top, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+}
 #endif
 
 #include <iostream>
@@ -21,6 +56,9 @@ using namespace ascii_render;
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+
+#include <string>
+#include <filesystem>
 
 using libvlc_instance_t = void;
 using libvlc_media_t = void;
@@ -70,14 +108,6 @@ bool load_vlc_functions(HMODULE vlc) {
            libvlc_media_release && libvlc_audio_set_volume && libvlc_media_player_play &&
            libvlc_media_player_set_pause && libvlc_media_player_get_time && libvlc_media_player_get_length &&
            libvlc_media_player_stop && libvlc_media_player_release && libvlc_release;
-}
-
-void set_console_size(int width, int height) {
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    COORD bufferSize = { (SHORT)width, (SHORT)height };
-    SMALL_RECT windowSize = { 0, 0, (SHORT)(width - 1), (SHORT)(height - 1) };
-    SetConsoleScreenBufferSize(hOut, bufferSize);
-    SetConsoleWindowInfo(hOut, TRUE, &windowSize);
 }
 
 void handle_input(libvlc_media_player_t* mediaPlayer,
@@ -259,6 +289,7 @@ void render_thread(std::atomic<bool>& running)
 
 int main(int argc, char* argv[]) {
     #ifdef _WIN32
+        move_console_to_top_left();
         freopen("nul", "w", stderr);
     #else
         freopen("/dev/null", "w", stderr);
@@ -341,7 +372,20 @@ int main(int argc, char* argv[]) {
     double frame_duration = 1.0 / fps;
 
     int height = static_cast<int>((cap.get(cv::CAP_PROP_FRAME_HEIGHT) / cap.get(cv::CAP_PROP_FRAME_WIDTH)) * width * 0.55);
-    set_console_size(width, height + 3);
+
+    #ifdef _WIN32
+        set_console_size(width, height + 3);
+        namespace fs = std::filesystem;
+        SetConsoleTitleA(fs::path(video_path).filename().string().c_str());
+        HWND hwndConsole = GetConsoleWindow();
+        LONG style = GetWindowLong(hwndConsole, GWL_STYLE);
+        style &= ~WS_SIZEBOX;
+        style &= ~WS_MAXIMIZEBOX;
+        SetWindowLong(hwndConsole, GWL_STYLE, style);
+        SetWindowPos(hwndConsole, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        remove_scrollbars(width, height+3);
+    #endif
 
     libvlc_media_player_play(mediaPlayer);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
