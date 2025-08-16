@@ -1,0 +1,5 @@
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+    libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev \
+    libvlc-dev libvlccore-dev vlc \
+    libncursesw5-dev
