@@ -371,8 +371,8 @@ namespace ascii_render {
         char* tail = base + body;
 
         // 1) reset any color left by pixels and put newline (preserve original layout)
-        std::memcpy(tail, reset_seq, reset_seq_len); tail += reset_seq_len;
-        *tail++ = '\n'; // matches original "\x1b[0m\n"
+        std::memcpy(tail, reset_seq, reset_seq_len);
+        tail += reset_seq_len; // matches original "\x1b[0m\n"
 
         // 2) progress bar, force interface color before it
         std::memcpy(tail, iface_color.data(), iface_color_len); tail += iface_color_len;
