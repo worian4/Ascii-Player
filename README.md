@@ -18,6 +18,10 @@ Installation for Windows:
 
 Installation for Linux:
 1. Download C++
-2. Download libraries: ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```
-3. Dowload gcc and g++
-4. Locate al the files
+2. Download libraries via ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```
+3. Dowload gcc, g++ and Ninja
+4. Download VLC
+5. Locate al the files
+6. Create a "shortcut" for the app via creating ```~/.local/share/applications/ascii-player.desktop``` with the file from git and choose your directiry
+7. Build the project
+8. Enjoy!
