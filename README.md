@@ -16,6 +16,7 @@ Installation for Windows:
 6. Build the project
 7. Enjoy!
 
+
 Installation for Linux:
 1. Download C++
 2. Download libraries via ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```
