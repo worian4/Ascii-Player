@@ -5,7 +5,9 @@ Usage: when you're done with building, you'll have an ```ASCII_Player.exe``` fil
 
 ![ancii_epic_test](https://github.com/user-attachments/assets/d9d49b21-b08a-430c-98b2-cb87902f9cbf)
 
-Installation:
+Now both Windows and Linux supported!
+
+Installation for Windows:
 1. Download C++ and C++ Build Tools for your system from VS Installer
 2. Download opencv
 3. Locate all the files
@@ -13,3 +15,9 @@ Installation:
 5. Edit ```CMakeLists.txt``` with your opencv location
 6. Build the project
 7. Enjoy!
+
+Installation for Linux:
+1. Download C++
+2. Download libraries: ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```
+3. Dowload gcc and g++
+4. Locate al the files
