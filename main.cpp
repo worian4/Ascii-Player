@@ -1,65 +1,103 @@
-#ifdef _WIN32
-#include <windows.h>
-void enableANSI() {
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD dwMode = 0;
-    GetConsoleMode(hOut, &dwMode);
-    dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-    SetConsoleMode(hOut, dwMode);
-}
-
-void set_console_size(int width, int height) {
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    COORD bufferSize = { (SHORT)width, (SHORT)height };
-    SMALL_RECT windowSize = { 0, 0, (SHORT)(width - 1), (SHORT)(height - 1) };
-    SetConsoleScreenBufferSize(hOut, bufferSize);
-    SetConsoleWindowInfo(hOut, TRUE, &windowSize);
-}
-
-void remove_scrollbars(int width, int height) {
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    COORD bufferSize;
-    bufferSize.X = (SHORT)width;
-    bufferSize.Y = (SHORT)height;
-    SetConsoleScreenBufferSize(hOut, bufferSize);
-
-    SMALL_RECT winSize;
-    winSize.Left = 0;
-    winSize.Top = 0;
-    winSize.Right = (SHORT)(width - 1);
-    winSize.Bottom = (SHORT)(height - 1);
-    SetConsoleWindowInfo(hOut, TRUE, &winSize);
-}
-
-void move_console_to_top_left() {
-    HWND hwndConsole = GetConsoleWindow();
-
-    RECT workArea;
-    SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
-
-    // Перемещаем в верхний левый угол рабочей области
-    SetWindowPos(hwndConsole, HWND_TOP, workArea.left, workArea.top, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
-}
-#endif
-
+#include "ascii_render.hpp"
 #include <iostream>
 #include <thread>
 #include <atomic>
-#include <conio.h>
-#include <opencv2/opencv.hpp>
-#include <opencv2/core/ocl.hpp>
-#include "ascii_render.hpp"
-using namespace ascii_render;
-
-#include <queue>
 #include <mutex>
 #include <condition_variable>
-
+#include <queue>
 #include <string>
 #include <filesystem>
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/ocl.hpp>
+#include <opencv2/core/version.hpp>
+#if defined(CV_VERSION_MAJOR) && (CV_VERSION_MAJOR >= 4)
+    #include <opencv2/core/utils/logger.hpp>
+    #define HAS_OPENCV_LOGGING 1
+#endif
 
+using namespace ascii_render;
+
+// --- platform includes / helpers ---
+#ifdef _WIN32
+    #define NOMINMAX
+    #include <windows.h>
+    #include <conio.h>
+
+    void enableANSI() {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hOut, &dwMode)) {
+            dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(hOut, dwMode);
+        }
+    }
+
+    void set_console_size(int width, int height) {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        COORD bufferSize = { (SHORT)width, (SHORT)height };
+        SMALL_RECT windowSize = { 0, 0, (SHORT)(width - 1), (SHORT)(height - 1) };
+        SetConsoleScreenBufferSize(hOut, bufferSize);
+        SetConsoleWindowInfo(hOut, TRUE, &windowSize);
+    }
+
+    void remove_scrollbars(int width, int height) {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+
+        COORD bufferSize;
+        bufferSize.X = (SHORT)width;
+        bufferSize.Y = (SHORT)height;
+        SetConsoleScreenBufferSize(hOut, bufferSize);
+
+        SMALL_RECT winSize;
+        winSize.Left = 0;
+        winSize.Top = 0;
+        winSize.Right = (SHORT)(width - 1);
+        winSize.Bottom = (SHORT)(height - 1);
+        SetConsoleWindowInfo(hOut, TRUE, &winSize);
+    }
+
+    void move_console_to_top_left() {
+        HWND hwndConsole = GetConsoleWindow();
+
+        RECT workArea;
+        SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+
+        SetWindowPos(hwndConsole, HWND_TOP, workArea.left, workArea.top, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+    }
+
+    // Windows dynamic lib helpers: use HMODULE, LoadLibraryA, GetProcAddress, FreeLibrary
+    using HMODULE_T = HMODULE;
+
+#else
+    // POSIX (Linux, etc.)
+    #include <dlfcn.h>
+    #include <ncurses.h>
+    #include <sys/ioctl.h>
+    #include <unistd.h>
+    #include <signal.h>
+    #include <cstring>
+
+    using HMODULE_T = void*;
+
+    void enableANSI() {
+        // on Linux terminals ANSI is usually already supported; no-op
+    }
+
+    void set_console_size(int width, int height) {
+        std::cout << "\033[8;" << height << ";" << width << "t" << std::flush;
+    }
+
+    void remove_scrollbars(int /*width*/, int /*height*/) {
+        // no-op on POSIX — terminal emulator decides scrollbar presence
+    }
+
+    void move_console_to_top_left() {
+        // not portable: skip
+    }
+#endif
+
+// --- libvlc function types (same names used on both platforms) ---
 using libvlc_instance_t = void;
 using libvlc_media_t = void;
 using libvlc_media_player_t = void;
@@ -77,20 +115,21 @@ using libvlc_media_player_stop_t = void (*)(libvlc_media_player_t*);
 using libvlc_media_player_release_t = void (*)(libvlc_media_player_t*);
 using libvlc_release_t = void (*)(libvlc_instance_t*);
 
-libvlc_new_t libvlc_new = nullptr;
-libvlc_media_new_path_t libvlc_media_new_path = nullptr;
-libvlc_media_player_new_from_media_t libvlc_media_player_new_from_media = nullptr;
-libvlc_media_release_t libvlc_media_release = nullptr;
-libvlc_audio_set_volume_t libvlc_audio_set_volume = nullptr;
-libvlc_media_player_play_t libvlc_media_player_play = nullptr;
-libvlc_media_player_set_pause_t libvlc_media_player_set_pause = nullptr;
-libvlc_media_player_get_time_t libvlc_media_player_get_time = nullptr;
-libvlc_media_player_get_length_t libvlc_media_player_get_length = nullptr;
-libvlc_media_player_stop_t libvlc_media_player_stop = nullptr;
-libvlc_media_player_release_t libvlc_media_player_release = nullptr;
-libvlc_release_t libvlc_release = nullptr;
+static libvlc_new_t libvlc_new = nullptr;
+static libvlc_media_new_path_t libvlc_media_new_path = nullptr;
+static libvlc_media_player_new_from_media_t libvlc_media_player_new_from_media = nullptr;
+static libvlc_media_release_t libvlc_media_release = nullptr;
+static libvlc_audio_set_volume_t libvlc_audio_set_volume = nullptr;
+static libvlc_media_player_play_t libvlc_media_player_play = nullptr;
+static libvlc_media_player_set_pause_t libvlc_media_player_set_pause = nullptr;
+static libvlc_media_player_get_time_t libvlc_media_player_get_time = nullptr;
+static libvlc_media_player_get_length_t libvlc_media_player_get_length = nullptr;
+static libvlc_media_player_stop_t libvlc_media_player_stop = nullptr;
+static libvlc_media_player_release_t libvlc_media_player_release = nullptr;
+static libvlc_release_t libvlc_release = nullptr;
 
-bool load_vlc_functions(HMODULE vlc) {
+#ifdef _WIN32
+bool load_vlc_functions(HMODULE_T vlc) {
     libvlc_new = (libvlc_new_t)GetProcAddress(vlc, "libvlc_new");
     libvlc_media_new_path = (libvlc_media_new_path_t)GetProcAddress(vlc, "libvlc_media_new_path");
     libvlc_media_player_new_from_media = (libvlc_media_player_new_from_media_t)GetProcAddress(vlc, "libvlc_media_player_new_from_media");
@@ -109,7 +148,30 @@ bool load_vlc_functions(HMODULE vlc) {
            libvlc_media_player_set_pause && libvlc_media_player_get_time && libvlc_media_player_get_length &&
            libvlc_media_player_stop && libvlc_media_player_release && libvlc_release;
 }
+#else
+bool load_vlc_functions(HMODULE_T vlc) {
+    libvlc_new = (libvlc_new_t)dlsym(vlc, "libvlc_new");
+    libvlc_media_new_path = (libvlc_media_new_path_t)dlsym(vlc, "libvlc_media_new_path");
+    libvlc_media_player_new_from_media = (libvlc_media_player_new_from_media_t)dlsym(vlc, "libvlc_media_player_new_from_media");
+    libvlc_media_release = (libvlc_media_release_t)dlsym(vlc, "libvlc_media_release");
+    libvlc_audio_set_volume = (libvlc_audio_set_volume_t)dlsym(vlc, "libvlc_audio_set_volume");
+    libvlc_media_player_play = (libvlc_media_player_play_t)dlsym(vlc, "libvlc_media_player_play");
+    libvlc_media_player_set_pause = (libvlc_media_player_set_pause_t)dlsym(vlc, "libvlc_media_player_set_pause");
+    libvlc_media_player_get_time = (libvlc_media_player_get_time_t)dlsym(vlc, "libvlc_media_player_get_time");
+    libvlc_media_player_get_length = (libvlc_media_player_get_length_t)dlsym(vlc, "libvlc_media_player_get_length");
+    libvlc_media_player_stop = (libvlc_media_player_stop_t)dlsym(vlc, "libvlc_media_player_stop");
+    libvlc_media_player_release = (libvlc_media_player_release_t)dlsym(vlc, "libvlc_media_player_release");
+    libvlc_release = (libvlc_release_t)dlsym(vlc, "libvlc_release");
 
+    return libvlc_new && libvlc_media_new_path && libvlc_media_player_new_from_media &&
+           libvlc_media_release && libvlc_audio_set_volume && libvlc_media_player_play &&
+           libvlc_media_player_set_pause && libvlc_media_player_get_time && libvlc_media_player_get_length &&
+           libvlc_media_player_stop && libvlc_media_player_release && libvlc_release;
+}
+#endif
+
+// --- input handling: Windows and POSIX implementations ---
+#ifdef _WIN32
 void handle_input(libvlc_media_player_t* mediaPlayer,
                   std::atomic<bool>& running,
                   std::atomic<bool>& paused,
@@ -122,8 +184,10 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
     DWORD events;
 
     while (running.load()) {
-        if (!ReadConsoleInput(hIn, &record, 1, &events))
+        if (!ReadConsoleInput(hIn, &record, 1, &events)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
+        }
 
         if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown) {
             int vk = record.Event.KeyEvent.wVirtualKeyCode;
@@ -161,12 +225,76 @@ void handle_input(libvlc_media_player_t* mediaPlayer,
         }
     }
 }
+#else
+void handle_input(libvlc_media_player_t* mediaPlayer,
+                  std::atomic<bool>& running,
+                  std::atomic<bool>& paused,
+                  std::atomic<int>& volume)
+{
+    // ncurses must be initialized by caller
+    // getch() in non-blocking mode
+    MEVENT event;
 
+    while (running.load()) {
+        int ch = getch();
+        if (ch == ERR) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        if (ch == 27) { // ESC
+            running.store(false);
+            break;
+        } else if (ch == ' ' || ch == KEY_ENTER) {
+            bool new_paused = !paused.load();
+            paused.store(new_paused);
+            if (libvlc_media_player_set_pause) libvlc_media_player_set_pause(mediaPlayer, new_paused ? 1 : 0);
+        } else if (ch == KEY_UP) {
+            int v = std::min(100, volume.load() + 5);
+            volume.store(v);
+            if (libvlc_audio_set_volume) libvlc_audio_set_volume(mediaPlayer, v);
+        } else if (ch == KEY_DOWN) {
+            int v = std::max(0, volume.load() - 5);
+            volume.store(v);
+            if (libvlc_audio_set_volume) libvlc_audio_set_volume(mediaPlayer, v);
+        } else if (ch == KEY_MOUSE) {
+            if (getmouse(&event) == OK) {
+                if (event.bstate & BUTTON4_PRESSED) {
+                    int v = std::min(100, volume.load() + 5);
+                    volume.store(v);
+                    if (libvlc_audio_set_volume) libvlc_audio_set_volume(mediaPlayer, v);
+                } else if (event.bstate & BUTTON5_PRESSED) {
+                    int v = std::max(0, volume.load() - 5);
+                    volume.store(v);
+                    if (libvlc_audio_set_volume) libvlc_audio_set_volume(mediaPlayer, v);
+                }
+            }
+        }
+    }
+}
+#endif
+
+// --- ascii queue + threads for processing/rendering (same logic as у вас) ---
 static std::queue<std::string> ascii_queue;
 static std::mutex ascii_mutex;
 static std::condition_variable ascii_cv;
 
-static std::atomic<bool> g_use_cuda(false);
+void render_thread(std::atomic<bool>& running) {
+    while (running.load() || !ascii_queue.empty()) {
+        std::unique_lock<std::mutex> lock(ascii_mutex);
+        ascii_cv.wait(lock, [&running] { return !ascii_queue.empty() || !running.load(); });
+
+        while (!ascii_queue.empty()) {
+            std::string ascii = std::move(ascii_queue.front());
+            ascii_queue.pop();
+            lock.unlock();
+
+            render_frame(ascii);
+
+            lock.lock();
+        }
+    }
+}
 
 void video_processing_thread(cv::VideoCapture& cap, int width, int height,
                              libvlc_media_player_t* mediaPlayer,
@@ -223,7 +351,7 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
             }
 
             paused_frame_pushed = false;
-        } 
+        }
         else {
             if (first_frame_read && !paused_frame_pushed && !last_frame.empty()) {
                 double current_time = 0.0;
@@ -269,24 +397,7 @@ void video_processing_thread(cv::VideoCapture& cap, int width, int height,
     ascii_cv.notify_all();
 }
 
-void render_thread(std::atomic<bool>& running)
-{
-    while (running.load() || !ascii_queue.empty()) {
-        std::unique_lock<std::mutex> lock(ascii_mutex);
-        ascii_cv.wait(lock, [&running]() { return !ascii_queue.empty() || !running.load(); });
-
-        while (!ascii_queue.empty()) {
-            std::string ascii = std::move(ascii_queue.front());
-            ascii_queue.pop();
-            lock.unlock();
-
-            render_frame(ascii);
-
-            lock.lock();
-        }
-    }
-}
-
+// --- main ---
 int main(int argc, char* argv[]) {
     #ifdef _WIN32
         move_console_to_top_left();
@@ -306,21 +417,40 @@ int main(int argc, char* argv[]) {
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_SILENT);
     enableANSI();
 
-    HMODULE vlc = LoadLibraryA("libvlc.dll");
+    // --- load libvlc dynamically ---
+    HMODULE_T vlc = nullptr;
+#ifdef _WIN32
+    vlc = LoadLibraryA("libvlc.dll");
     if (!vlc) {
         std::cerr << "Failed to load libvlc.dll\n";
         return 1;
     }
+#else
+    // try common SONAMEs
+    const char* candidates[] = {"libvlc.so.5", "libvlc.so"};
+    for (auto &c : candidates) {
+        vlc = dlopen(c, RTLD_LAZY | RTLD_LOCAL);
+        if (vlc) break;
+    }
+    if (!vlc) {
+        std::cerr << "Failed to load libvlc (tried libvlc.so.5 and libvlc.so). Make sure libvlc is installed.\n";
+        return 1;
+    }
+#endif
 
     if (!load_vlc_functions(vlc)) {
         std::cerr << "Failed to load one or more libvlc functions\n";
+#ifdef _WIN32
         FreeLibrary(vlc);
+#else
+        dlclose(vlc);
+#endif
         return 1;
     }
 
-    bool rgb = true; //<- change to false for better performance
-    int width = 200; //the lower the better for the performace
-    int color_threads = 6; //used in color mode only
+    bool rgb = true; // <- change to false for better perf
+    int width = 100; // lower -> better perf
+    int color_threads = 6; // for color mode
 
     std::atomic<bool> running(true);
     std::atomic<bool> paused(false);
@@ -332,11 +462,15 @@ int main(int argc, char* argv[]) {
         "--plugin-path=./plugins",
         "--no-video"
     };
-    libvlc_instance_t* vlc_instance = libvlc_new(3, vlc_args);
 
+    libvlc_instance_t* vlc_instance = libvlc_new(3, vlc_args);
     if (!vlc_instance) {
-        std::cout << "Failed to create VLC instance";
+        std::cerr << "Failed to create VLC instance\n";
+#ifdef _WIN32
         FreeLibrary(vlc);
+#else
+        dlclose(vlc);
+#endif
         return 1;
     }
 
@@ -344,53 +478,82 @@ int main(int argc, char* argv[]) {
     if (!media) {
         std::cerr << "Failed to create media for " << video_path << "\n";
         libvlc_release(vlc_instance);
+#ifdef _WIN32
         FreeLibrary(vlc);
+#else
+        dlclose(vlc);
+#endif
         return 1;
     }
 
     libvlc_media_player_t* mediaPlayer = libvlc_media_player_new_from_media(media);
     libvlc_media_release(media);
-    libvlc_audio_set_volume(mediaPlayer, volume.load());
+    if (libvlc_audio_set_volume) libvlc_audio_set_volume(mediaPlayer, volume.load());
 
     cv::VideoCapture cap(video_path);
     if (!cap.isOpened()) {
         std::cerr << "Failed to open video file " << video_path << "\n";
-        libvlc_media_player_release(mediaPlayer);
+        if (libvlc_media_player_release) libvlc_media_player_release(mediaPlayer);
         libvlc_release(vlc_instance);
+#ifdef _WIN32
         FreeLibrary(vlc);
+#else
+        dlclose(vlc);
+#endif
         return 1;
     }
 
     double fps = cap.get(cv::CAP_PROP_FPS);
     if (fps <= 0) {
         std::cerr << "Invalid FPS value: " << fps << "\n";
-        libvlc_media_player_release(mediaPlayer);
+        if (libvlc_media_player_release) libvlc_media_player_release(mediaPlayer);
         libvlc_release(vlc_instance);
+#ifdef _WIN32
         FreeLibrary(vlc);
+#else
+        dlclose(vlc);
+#endif
         return 1;
     }
     double frame_duration = 1.0 / fps;
 
     int height = static_cast<int>((cap.get(cv::CAP_PROP_FRAME_HEIGHT) / cap.get(cv::CAP_PROP_FRAME_WIDTH)) * width * 0.55);
 
-    #ifdef _WIN32
-        set_console_size(width, height + 3);
-        namespace fs = std::filesystem;
-        SetConsoleTitleA(fs::path(video_path).filename().string().c_str());
-        HWND hwndConsole = GetConsoleWindow();
-        LONG style = GetWindowLong(hwndConsole, GWL_STYLE);
-        style &= ~WS_SIZEBOX;
-        style &= ~WS_MAXIMIZEBOX;
-        SetWindowLong(hwndConsole, GWL_STYLE, style);
-        SetWindowPos(hwndConsole, nullptr, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-        remove_scrollbars(width, height+3);
-    #endif
+#ifdef _WIN32
+    set_console_size(width, height + 3);
+    namespace fs = std::filesystem;
+    SetConsoleTitleA(fs::path(video_path).filename().string().c_str());
+    HWND hwndConsole = GetConsoleWindow();
+    LONG style = GetWindowLong(hwndConsole, GWL_STYLE);
+    style &= ~WS_SIZEBOX;
+    style &= ~WS_MAXIMIZEBOX;
+    SetWindowLong(hwndConsole, GWL_STYLE, style);
+    SetWindowPos(hwndConsole, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    remove_scrollbars(width, height+3);
+#else
+    // Initialize ncurses for input handling and terminal configs
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    nodelay(stdscr, TRUE); // non-blocking getch
+    mousemask(ALL_MOUSE_EVENTS | BUTTON4_PRESSED | BUTTON5_PRESSED, NULL);
+    set_console_size(width, height + 3);
+    // set terminal title (most terminals support OSC)
+    std::string title = std::filesystem::path(video_path).filename().string();
+    std::cout << "\033]0;" << title << "\007";
+#endif
 
-    libvlc_media_player_play(mediaPlayer);
+    if (libvlc_media_player_play) libvlc_media_player_play(mediaPlayer);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+    // spawn input/processing/render threads
+#ifdef _WIN32
     std::thread input_thread(handle_input, mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume));
+#else
+    std::thread input_thread([&] { handle_input(mediaPlayer, running, paused, volume); });
+#endif
 
     std::thread processing_thread(video_processing_thread, std::ref(cap), width, height,
                                   mediaPlayer, std::ref(running), std::ref(paused), std::ref(volume), frame_duration, rgb, color_threads);
@@ -400,9 +563,16 @@ int main(int argc, char* argv[]) {
     if (drawing_thread.joinable()) drawing_thread.join();
     if (input_thread.joinable()) input_thread.join();
 
-    libvlc_media_player_stop(mediaPlayer);
-    libvlc_media_player_release(mediaPlayer);
+    if (libvlc_media_player_stop) libvlc_media_player_stop(mediaPlayer);
+    if (libvlc_media_player_release) libvlc_media_player_release(mediaPlayer);
     libvlc_release(vlc_instance);
+
+#ifdef _WIN32
     FreeLibrary(vlc);
+#else
+    endwin(); // restore terminal
+    dlclose(vlc);
+#endif
+
     return 0;
 }
