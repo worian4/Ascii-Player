@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
-project(ASCII_Player)
+project(ASCII_Player LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCES
-    icon.rc
     main.cpp
     ascii_render.cpp
 )
@@ -14,26 +13,53 @@ set(HEADERS
     ascii_render.hpp
 )
 
+if (WIN32)
+    list(APPEND SOURCES icon.rc)
+endif()
+
 # OpenCV
-set(OpenCV_DIR "C:/opencv/build/x64/vc16/lib")
+if (WIN32)
+    set(OpenCV_DIR "C:/opencv/build/x64/vc16/lib")
+endif()
 find_package(OpenCV REQUIRED)
 
+if (UNIX AND NOT WIN32)
+    find_package(Threads REQUIRED)
+endif()
 
 add_executable(ASCII_Player ${SOURCES} ${HEADERS})
 
+# include dirs
 target_include_directories(ASCII_Player PRIVATE
     ${OpenCV_INCLUDE_DIRS}
-    ${CUDA_INCLUDE_DIR}
-    ${FFMPEG_INCLUDE_DIR}
 )
 
-target_link_directories(ASCII_Player PRIVATE
-    ${CUDA_LIB_DIR}
-)
+if (WIN32)
+    target_include_directories(ASCII_Player PRIVATE
+        ${CUDA_INCLUDE_DIR}
+        ${FFMPEG_INCLUDE_DIR}
+    )
+endif()
 
-target_link_libraries(ASCII_Player PRIVATE
-    ${OpenCV_LIBS}
-)
+if (WIN32)
+    target_link_directories(ASCII_Player PRIVATE
+        ${CUDA_LIB_DIR}
+    )
+endif()
+
+# link libs
+if (WIN32)
+    target_link_libraries(ASCII_Player PRIVATE
+        ${OpenCV_LIBS}
+    )
+else()
+    target_link_libraries(ASCII_Player PRIVATE
+        ${OpenCV_LIBS}
+        dl
+        ncurses
+        Threads::Threads
+    )
+endif()
 
 if (WIN32)
     add_custom_command(TARGET ASCII_Player POST_BUILD
