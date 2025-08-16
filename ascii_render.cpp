@@ -167,10 +167,12 @@ namespace ascii_render {
 
         std::cout << "\x1b[H";
 
+        std::cout << "\x1b[H\x1b[48;2;0;0;0m"; 
+
         size_t updated_lines = 0;
         for (size_t i = 0; i < lines.size(); ++i) {
             if (i >= prev_lines.size() || lines[i] != prev_lines[i]) {
-                std::cout << "\x1b[" << (i + 1) << ";1H" << lines[i] << "\x1b[0m";
+                std::cout << "\x1b[" << (i + 1) << ";1H" << lines[i];
                 ++updated_lines;
             }
         }
@@ -315,15 +317,27 @@ namespace ascii_render {
         size_t body = 0;
         for (int t = 0; t < T; ++t) { offset[t] = body; body += blk_len[t]; }
 
-        const size_t reset_len = 5;               // "\x1b[0m\n"
+        // sequences we will use
+        const char reset_seq[] = "\x1b[0m";
+        const size_t reset_seq_len = sizeof(reset_seq) - 1; // 4
+
+        // interface color: white foreground + black background (explicit)
+        const std::string iface_color = std::string("\x1b[38;2;255;255;255m") + std::string("\x1b[48;2;0;0;0m");
+        const size_t iface_color_len = iface_color.size();
+
         const int    barW      = std::max(10, W);
         const size_t bar_len   = barW + 1;        // + '\n'
         const size_t status_len= W + 1;           // + '\n'
-        const size_t total_len = body + reset_len + bar_len + status_len;
+
+        // total length: body + initial reset+newline (5) + iface_color + bar_len + iface_color + status_len + final reset
+        const size_t initial_reset_and_nl = reset_seq_len + 1; // "\x1b[0m\n"
+        const size_t final_reset_len = reset_seq_len;
+        const size_t total_len = body + initial_reset_and_nl + iface_color_len + bar_len + iface_color_len + status_len + final_reset_len;
 
         std::vector<char> buf(total_len);
         char* base = buf.data();
 
+        // build frame content in parallel (same as before)
         for (int t = 0; t < T; ++t) {
             int y0 = t * rows_per, y1 = std::min(H, y0 + rows_per);
             if (y0 >= H || blk_len[t] == 0) continue;
@@ -353,14 +367,30 @@ namespace ascii_render {
         }
         pool->wait_all();
 
+        // tail after colored body
         char* tail = base + body;
-        std::memcpy(tail, "\x1b[0m\n", 5); tail += 5;
+
+        // 1) reset any color left by pixels and put newline (preserve original layout)
+        std::memcpy(tail, reset_seq, reset_seq_len); tail += reset_seq_len;
+        *tail++ = '\n'; // matches original "\x1b[0m\n"
+
+        // 2) progress bar, force interface color before it
+        std::memcpy(tail, iface_color.data(), iface_color_len); tail += iface_color_len;
 
         double prog = std::clamp(progress, 0.0, 1.0);
         int filled = static_cast<int>(prog * barW);
-        std::memset(tail, '#', filled);            tail += filled;
-        std::memset(tail, '-', barW - filled);     tail += (barW - filled);
+        if (filled > 0) {
+            std::memset(tail, '#', filled);
+            tail += filled;
+        }
+        if (barW - filled > 0) {
+            std::memset(tail, '-', barW - filled);
+            tail += (barW - filled);
+        }
         *tail++ = '\n';
+
+        // 3) status line, ensure interface color is active (we already set it before bar, but set again to be explicit)
+        std::memcpy(tail, iface_color.data(), iface_color_len); tail += iface_color_len;
 
         auto put_time5 = [](double sec, char* out){
             int t = (int)sec; int m = t/60, s = t%60;
@@ -378,7 +408,9 @@ namespace ascii_render {
         std::memcpy(&line[pos], t2, 5); pos += 5;
 
         std::string vol = "Vol: " + std::to_string(volume) + "% ";
-        std::memcpy(&line[W - (int)vol.size()], vol.data(), vol.size());
+        if ((int)vol.size() <= W) {
+            std::memcpy(&line[W - (int)vol.size()], vol.data(), vol.size());
+        }
 
         const char* status = is_paused ? "||" : "|>";
         int spos = W/2 - 1;
@@ -387,6 +419,10 @@ namespace ascii_render {
         std::memcpy(tail, line.data(), W); tail += W;
         *tail++ = '\n';
 
+        // 4) final reset so terminal returns to normal (prevents leakage to terminal)
+        std::memcpy(tail, reset_seq, reset_seq_len); tail += reset_seq_len;
+
+        // sanity: tail - base should equal total_len (optional in debug)
         return std::string(buf.data(), tail - buf.data());
     }
 }
