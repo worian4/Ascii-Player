@@ -3,3 +3,4 @@ sudo apt install -y build-essential cmake pkg-config \
     libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev \
     libvlc-dev libvlccore-dev vlc \
     libncursesw5-dev
+sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev
