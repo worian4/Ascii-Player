@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ASCII Player
+Comment=Play videos as ASCII art in terminal
+Exec=alacritty -e /home/USER/ascii_player/build/linux-gcc-release/ASCII_Player %f
+Icon=/home/gregory-vostro/ascii_player/animegan.ico
+Terminal=false
+Type=Application
+Categories=AudioVideo;Player;Video;
+MimeType=video/mp4;video/x-matroska;video/x-msvideo;video/avi;video/webm;
