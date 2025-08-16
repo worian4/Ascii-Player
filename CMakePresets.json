@@ -1,27 +1,81 @@
 {
-    "version": 8,
-    "configurePresets": [
-        {
-            "name": "Visual Studio Build Tools 2022 Release - amd64",
-            "displayName": "Visual Studio Build Tools 2022 Release - amd64",
-            "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
-            "generator": "Visual Studio 17 2022",
-            "toolset": "host=x64",
-            "architecture": "x64",
-            "binaryDir": "${sourceDir}/ASCII_Player",
-            "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
-            }
-        }
-    ],
-    "buildPresets": [
-        {
-            "name": "Visual Studio Build Tools 2022 Release - amd64-debug",
-            "displayName": "Visual Studio Build Tools 2022 Release - amd64 - Debug",
-            "configurePreset": "Visual Studio Build Tools 2022 Release - amd64",
-            "configuration": "Debug"
-        }
-    ]
+  "version": 8,
+  "configurePresets": [
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "description": "Build with GCC and Ninja (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_C_COMPILER": "/usr/bin/gcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++"
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux GCC Debug",
+      "description": "Build with GCC and Ninja (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_C_COMPILER": "/usr/bin/gcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++"
+      }
+    },
+    {
+      "name": "linux-clang-release",
+      "displayName": "Linux Clang Release",
+      "description": "Build with Clang and Ninja (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-clang-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_C_COMPILER": "/usr/bin/clang",
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++"
+      }
+    },
+    {
+      "name": "Visual Studio Build Tools 2022 Release - amd64",
+      "displayName": "Visual Studio Build Tools 2022 Release - amd64",
+      "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "host=x64",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/ASCII_Player",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-gcc-release-build",
+      "displayName": "Linux GCC Release Build",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-gcc-debug-build",
+      "displayName": "Linux GCC Debug Build",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "linux-clang-release-build",
+      "displayName": "Linux Clang Release Build",
+      "configurePreset": "linux-clang-release"
+    },
+    {
+      "name": "Visual Studio Build Tools 2022 Release - amd64-debug",
+      "displayName": "Visual Studio Build Tools 2022 Release - amd64 - Debug",
+      "configurePreset": "Visual Studio Build Tools 2022 Release - amd64",
+      "configuration": "Debug"
+    }
+  ]
 }
