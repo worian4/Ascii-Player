@@ -23,7 +23,6 @@ Installation for Linux:
 ```
 sudo apt-get install build-essential cmake pkg-config libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev
 ```
-Make sure that all the libraries have been installed.
 4. Dowload ```gcc```, ```g++``` and ```Ninja```
 5. Download ```VLC```
 6. Locate al the files from git
