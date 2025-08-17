@@ -19,12 +19,16 @@ Installation for Windows:
 
 Installation for Linux:
 1. Download C++
-2. Download libraries via ```sudo apt-get install build-essential cmake pkg-config libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```. Make sure that all the libraries have been installed.
-3. Dowload ```gcc```, ```g++``` and ```Ninja```
-4. Download ```VLC```
-5. Locate al the files from git
-6. Build the project
-7. Create a "shortcut" for the app via creating ```~/.local/share/applications/ascii-player.desktop``` with the file from git and choose your directiry to the build in in it
-8. Enjoy!
+2. Download libraries via
+```
+sudo apt-get install build-essential cmake pkg-config libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev
+```
+Make sure that all the libraries have been installed.
+4. Dowload ```gcc```, ```g++``` and ```Ninja```
+5. Download ```VLC```
+6. Locate al the files from git
+7. Build the project
+8. Create a "shortcut" for the app via creating ```~/.local/share/applications/ascii-player.desktop``` with the file from git and choose your directiry to the build in in it
+9. Enjoy!
 
 *however, Linux version doesn't work as in Windows because of the terminal behaviour. Windows terminal allows to be resized and to be positioned from a program, which is not allowed on most of Linux terminals. So the diffrence is that you will have to set position and resize the window of the terminal manually, or just click 'maximize'.
