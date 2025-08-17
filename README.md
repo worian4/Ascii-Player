@@ -19,7 +19,7 @@ Installation for Windows:
 
 Installation for Linux:
 1. Download C++
-2. Download libraries via ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```
+2. Download libraries via ```sudo apt-get install libopencv-dev libopencv-core-dev libopencv-imgproc-dev libopencv-highgui-dev libvlc-dev libvlccore-dev vlc libncursesw5-dev```. Make sure that all the libraries have been installed.
 3. Dowload ```gcc```, ```g++``` and ```Ninja```
 4. Download ```VLC```
 5. Locate al the files from git
